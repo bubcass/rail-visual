@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ireland Rail Traffic</title>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@9.0.35/dist.min.js"></script>
+  <style>
+    :root { --bg:#07090d; --panel:rgba(10,14,21,.94); --ink:#e9eef4; --muted:#8e99aa; --accent:#4ecf9d; }
+    * { box-sizing:border-box; } html,body,#map { width:100%; height:100%; margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 ui-sans-serif,system-ui,sans-serif; }
+    .panel { position:absolute; z-index:2; border:1px solid rgba(255,255,255,.1); border-radius:12px; background:var(--panel); backdrop-filter:blur(14px); }
+    #summary { top:16px; right:16px; width:250px; padding:15px 17px; text-align:center; }
+    #clock { font:600 42px/1 ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums; }
+    #date,#count { margin-top:6px; color:var(--muted); font-size:12px; } #count b { color:var(--ink); font-size:15px; }
+    #about { bottom:16px; left:16px; width:270px; padding:14px 16px; color:#c4cedb; font-size:12px; }
+    #about strong { display:block; color:var(--ink); margin-bottom:5px; } #about small { color:var(--muted); display:block; margin-top:8px; }
+    #controls { bottom:16px; left:50%; transform:translateX(-50%); width:min(680px,calc(100vw - 32px)); padding:12px 14px; }
+    #curve { display:block; width:100%; height:42px; cursor:ew-resize; } .row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+    button { border:1px solid rgba(255,255,255,.16); border-radius:7px; background:rgba(255,255,255,.07); color:var(--ink); padding:6px 11px; cursor:pointer; }
+    button[aria-pressed="true"] { background:#17785d; border-color:#259875; } #position { margin-left:auto; color:var(--muted); font:600 12px ui-monospace,monospace; }
+    #loading { position:absolute; inset:0; z-index:5; display:grid; place-content:center; text-align:center; background:var(--bg); gap:7px; } #loading span { color:var(--muted); }
+    @media (max-width:680px) { #summary { top:10px; right:10px; width:190px; } #clock{font-size:30px} #about{display:none} }
+  </style>
+</head>
+<body>
+  <main id="map" aria-label="Animated map of scheduled Irish rail services"></main>
+  <section id="summary" class="panel"><div id="clock">--:--</div><div id="date">Loading timetable</div><div id="count"><b>—</b> services moving</div></section>
+  <section id="about" class="panel"><strong>Ireland Rail Traffic</strong>Scheduled Irish Rail and DART services replayed over one timetable day.<small>Source: National Transport Authority GTFS. Route geometry is the published GTFS shape; this is not live train tracking.</small></section>
+  <section id="controls" class="panel"><canvas id="curve" height="42" aria-label="Daily rail activity timeline"></canvas><div class="row"><button id="play" aria-pressed="true">Pause</button><button data-speed="120">2×</button><button data-speed="300" aria-pressed="true">5×</button><button data-speed="720">12×</button><span id="position">00:00</span></div></section>
+  <div id="loading"><b>Preparing data</b><span>Loading scheduled services…</span></div>
+  <script>
+    const DAY=86400, trail=900, $=s=>document.querySelector(s);
+    const map=new maplibregl.Map({container:'map',style:'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',center:[-8.0,53.25],zoom:6.1,attributionControl:{compact:true}});
+    map.fitBounds([[-10.9,51.25],[-5.2,55.55]],{padding:{top:55,bottom:105,left:55,right:260},duration:0});
+    fetch('data/irish-rail-day.json').then(r=>r.json()).then(data=>{
+      const trips=data.trips.map(t=>({...t,path:t.points.map(p=>[p[0],p[1]]),times:t.points.map(p=>p[2])}));
+      $('#date').textContent=new Date(data.date+'T12:00:00').toLocaleDateString('en-IE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+      let time=4*3600, playing=true, speed=300, last=performance.now();
+      const overlay=new deck.MapboxOverlay({interleaved:false,layers:[]}); map.addControl(overlay);
+      const activity=Array.from({length:1440},(_,m)=>trips.reduce((n,t)=>n+(t.times[0]<=m*60&&t.times.at(-1)>=m*60),0));
+      const canvas=$('#curve'), ctx=canvas.getContext('2d');
+      function drawCurve(){ const w=canvas.width=canvas.clientWidth*devicePixelRatio,h=canvas.height=42*devicePixelRatio,max=Math.max(...activity);ctx.clearRect(0,0,w,h);ctx.strokeStyle='rgba(255,255,255,.22)';ctx.beginPath();activity.forEach((v,i)=>{const x=i/1439*w,y=h-5-(v/max)*(h-10);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.strokeStyle='#4ecf9d';ctx.lineWidth=2*devicePixelRatio;ctx.beginPath();ctx.moveTo(time/DAY*w,0);ctx.lineTo(time/DAY*w,h);ctx.stroke(); }
+      function currentCount(){ return trips.reduce((n,t)=>n+(t.times[0]<=time&&t.times.at(-1)>=time),0); }
+      function render(){ overlay.setProps({layers:[new deck.TripsLayer({id:'trips',data:trips,getPath:t=>t.path,getTimestamps:t=>t.times,getColor:[78,207,157],currentTime:time,trailLength:trail,widthMinPixels:1.25,opacity:.86,capRounded:true,jointRounded:true}),new deck.ScatterplotLayer({id:'heads',data:trips.filter(t=>t.times[0]<=time&&t.times.at(-1)>=time),getPosition:t=>{let i=t.times.findIndex(v=>v>=time);i=Math.max(1,i);const f=(time-t.times[i-1])/(t.times[i]-t.times[i-1]||1);return [t.path[i-1][0]+(t.path[i][0]-t.path[i-1][0])*f,t.path[i-1][1]+(t.path[i][1]-t.path[i-1][1])*f]},radiusUnits:'pixels',getRadius:2.6,radiusMinPixels:1.8,radiusMaxPixels:3.6,getFillColor:[158,255,211],opacity:.96})]});
+        const h=Math.floor(time/3600),m=Math.floor(time/60)%60,label=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; $('#clock').textContent=label;$('#position').textContent=label;$('#count').innerHTML=`<b>${currentCount().toLocaleString('en-IE')}</b> services moving`;drawCurve(); }
+      function tick(now){if(playing){time=(time+(now-last)/1000*speed)%DAY;render()}last=now;requestAnimationFrame(tick)}
+      $('#play').onclick=()=>{playing=!playing;$('#play').textContent=playing?'Pause':'Play';$('#play').setAttribute('aria-pressed',playing)};document.querySelectorAll('[data-speed]').forEach(b=>b.onclick=()=>{speed=+b.dataset.speed;document.querySelectorAll('[data-speed]').forEach(x=>x.setAttribute('aria-pressed',x===b))});canvas.onclick=e=>{time=e.offsetX/canvas.clientWidth*DAY;render()};
+      map.on('load',()=>{$('#loading').remove();render();requestAnimationFrame(tick)}); window.addEventListener('resize',drawCurve);
+    }).catch(error=>{$('#loading').innerHTML=`<b>Could not load the timetable</b><span>${error.message}</span>`});
+  </script>
+</body>
+</html>
