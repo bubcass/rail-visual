@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Build browser-ready scheduled Irish Rail trajectories for one service date.
+"""Build browser-ready scheduled NTA GTFS trajectories for one service date.
 
-Uses the official NTA Irish Rail GTFS shapes as published. This is deliberately
-not a real-time feed and not yet OSM map-matched; those limitations belong in
-the user-facing data notes.
+The result uses published GTFS route shapes rather than live vehicle locations
+or map-matched road geometry.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MODE_ROUTE_TYPES = {"rail": {2}, "bus": {3}}
 
 
 def rows(archive: zipfile.ZipFile, name: str):
@@ -70,6 +70,8 @@ def main() -> None:
     parser.add_argument("date", nargs="?", default="2026-09-30", help="service date, YYYY-MM-DD")
     parser.add_argument("--feed", type=Path, default=ROOT / "GTFS_Irish_Rail.zip")
     parser.add_argument("--output", type=Path, default=ROOT / "docs/data/irish-rail-day.json")
+    parser.add_argument("--mode", choices=MODE_ROUTE_TYPES, default="rail", help="GTFS mode to export")
+    parser.add_argument("--maximum-points", type=int, default=180, help="maximum shape points per trip")
     args = parser.parse_args()
     target = datetime.strptime(args.date, "%Y-%m-%d").date()
 
@@ -80,10 +82,13 @@ def main() -> None:
         for row in rows(archive, "shapes.txt"):
             shapes[row["shape_id"]].append((int(row["shape_pt_sequence"]), float(row["shape_pt_lon"]), float(row["shape_pt_lat"])))
         shape_points = {key: [(lon, lat) for _, lon, lat in sorted(value)] for key, value in shapes.items()}
+        allowed_types = MODE_ROUTE_TYPES[args.mode]
         trips = {
             row["trip_id"]: row
             for row in rows(archive, "trips.txt")
-            if row["service_id"] in services and row.get("shape_id") in shape_points
+            if row["service_id"] in services
+            and row.get("shape_id") in shape_points
+            and int(routes[row["route_id"]].get("route_type") or -1) in allowed_types
         }
         bounds: dict[str, list[int]] = {}
         for row in rows(archive, "stop_times.txt"):
@@ -102,17 +107,17 @@ def main() -> None:
         start, end = bounds[trip_id]
         if end <= start:
             continue
-        points = simplify(shape_points[trip["shape_id"]])
+        points = simplify(shape_points[trip["shape_id"]], args.maximum_points)
         route = routes[trip["route_id"]]
         output.append({
             "id": trip_id,
             "route": route.get("route_short_name") or "Rail",
-            "name": route.get("route_long_name") or "Irish Rail service",
+            "name": route.get("route_long_name") or f"NTA {args.mode} service",
             "points": [[round(lon, 5), round(lat, 5), timestamp] for (lon, lat), timestamp in zip(points, point_times(points, start, end))],
         })
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"date": args.date, "trips": output}, separators=(",", ":")), encoding="utf-8")
-    print(f"Wrote {args.output}: {len(output):,} scheduled trips on {args.date}.")
+    args.output.write_text(json.dumps({"date": args.date, "mode": args.mode, "trips": output}, separators=(",", ":")), encoding="utf-8")
+    print(f"Wrote {args.output}: {len(output):,} scheduled {args.mode} trips on {args.date}.")
 
 
 if __name__ == "__main__":
