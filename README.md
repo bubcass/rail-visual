@@ -1,6 +1,6 @@
 # Ireland Rail Traffic
 
-A standalone, GitHub Pages-ready proof of concept that visualises scheduled Irish Rail services over a single day. It takes its visual direction from the animated French rail-traffic map: a dark basemap, moving vehicle heads, fading trails, and a 24-hour timeline. Scheduled buses can be loaded from the same NTA GTFS model on demand.
+A standalone, GitHub Pages-ready proof of concept that visualises scheduled Irish Rail services over a single day. It takes its visual direction from the animated French rail-traffic map: a dark basemap, moving vehicle heads, fading trails, and a 24-hour timeline. Scheduled buses load from the same NTA GTFS model and are visible by default.
 
 It is deliberately separate from Constituency Insights while the idea is being evaluated.
 
@@ -31,7 +31,7 @@ To generate the optional scheduled-bus layer, download NTA's `GTFS_All.zip` and 
 python3 scripts/build_day.py 2026-09-30 --feed GTFS_All.zip --mode bus --maximum-points 32 --output docs/data/nta-bus-day.json
 ```
 
-The page fetches that file only after the user selects **Show buses**, then only renders trips whose published GTFS shape intersects the current map view. This is still a timetable replay: the bus positions are interpolated along scheduled route shapes.
+The page fetches that file automatically on startup and shows buses by default, only rendering trips whose published GTFS shape intersects the current map view. Use **Hide buses** to turn the bus layer off. This is still a timetable replay: the bus positions are interpolated along scheduled route shapes.
 
 The optional constituency filter uses the boundary source shared with Constituency Insights. To refresh its lean browser copy:
 
