@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import io
 import json
 import math
@@ -50,11 +51,46 @@ def active_services(archive: zipfile.ZipFile, target: date) -> set[str]:
     return services
 
 
+def point_line_distance_squared(point: tuple[float, float], start: tuple[float, float], end: tuple[float, float]) -> float:
+    """Squared distance in a locally scaled lon/lat plane."""
+    scale = math.cos(math.radians((start[1] + end[1]) / 2))
+    px, py = point[0] * scale, point[1]
+    sx, sy = start[0] * scale, start[1]
+    ex, ey = end[0] * scale, end[1]
+    dx, dy = ex - sx, ey - sy
+    if dx == 0 and dy == 0:
+        return (px - sx) ** 2 + (py - sy) ** 2
+    fraction = max(0.0, min(1.0, ((px - sx) * dx + (py - sy) * dy) / (dx * dx + dy * dy)))
+    return (px - (sx + fraction * dx)) ** 2 + (py - (sy + fraction * dy)) ** 2
+
+
 def simplify(points: list[tuple[float, float]], maximum: int = 180) -> list[tuple[float, float]]:
+    """Keep the strongest bends instead of evenly skipping through a route.
+
+    Uniform sampling can draw a chord across a tight city turn. This bounded,
+    iterative Douglas-Peucker variant retains the points with the largest
+    deviation first, while preserving the requested browser-data budget.
+    """
     if len(points) <= maximum:
         return points
-    step = (len(points) - 1) / (maximum - 1)
-    return [points[round(index * step)] for index in range(maximum)]
+
+    selected = {0, len(points) - 1}
+    candidates: list[tuple[float, int, int, int]] = []
+
+    def add_segment(start: int, end: int) -> None:
+        if end - start < 2:
+            return
+        index = max(range(start + 1, end), key=lambda item: point_line_distance_squared(points[item], points[start], points[end]))
+        distance = point_line_distance_squared(points[index], points[start], points[end])
+        heapq.heappush(candidates, (-distance, start, end, index))
+
+    add_segment(0, len(points) - 1)
+    while candidates and len(selected) < maximum:
+        _, start, end, index = heapq.heappop(candidates)
+        selected.add(index)
+        add_segment(start, index)
+        add_segment(index, end)
+    return [points[index] for index in sorted(selected)]
 
 
 def point_times(points: list[tuple[float, float]], start: int, end: int) -> list[int]:
@@ -101,13 +137,18 @@ def main() -> None:
             entry[1] = max(entry[1], departure)
 
     output = []
+    simplified_shapes: dict[str, list[tuple[float, float]]] = {}
     for trip_id, trip in trips.items():
         if trip_id not in bounds:
             continue
         start, end = bounds[trip_id]
         if end <= start:
             continue
-        points = simplify(shape_points[trip["shape_id"]], args.maximum_points)
+        shape_id = trip["shape_id"]
+        points = simplified_shapes.get(shape_id)
+        if points is None:
+            points = simplify(shape_points[shape_id], args.maximum_points)
+            simplified_shapes[shape_id] = points
         route = routes[trip["route_id"]]
         output.append({
             "id": trip_id,

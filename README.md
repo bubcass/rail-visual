@@ -28,7 +28,7 @@ Use any date covered by the downloaded feed. The script writes `docs/data/irish-
 To generate the optional scheduled-bus layer, download NTA's `GTFS_All.zip` and run:
 
 ```bash
-python3 scripts/build_day.py 2026-09-30 --feed GTFS_All.zip --mode bus --maximum-points 32 --output docs/data/nta-bus-day.json
+python3 scripts/build_day.py 2026-09-30 --feed GTFS_All.zip --mode bus --maximum-points 48 --output docs/data/nta-bus-day.json
 ```
 
 The page fetches that file automatically on startup and shows buses by default, only rendering trips whose published GTFS shape intersects the current map view. Use **Hide buses** to turn the bus layer off. This is still a timetable replay: the bus positions are interpolated along scheduled route shapes.
